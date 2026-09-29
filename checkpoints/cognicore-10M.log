@@ -1,0 +1,22 @@
+==============================================================================
+  COGNICORE  -  continuous training on CPU   (Ctrl+C to stop)
+==============================================================================
+  architecture   CogniCore / HDS-LSM   NOT an LLM
+  model          Config(d_model=288, n_layers=8, d_inner=288, d_ff=768, d_hd=128, seq_len=256)
+  parameters     10,020,642   (target 10,000,000, error 0.21%)
+                  fixed 1,253,922 + 8 x 1,105,056
+  HDE embedding  0 parameters  (seeded hyperdimensional basis, vocabulary-free)
+  memory         6.0 KB/layer, fixed  |  RAM for w+g+adam ~160 MB
+  attention      none   |   KV cache: none   |   tokenizer: none
+  working on     raw bytes 0-255, one byte per token
+
+  downloading / loading corpus ...
+[data] cache hit: 23,469,663 bytes from data\corpus.txt
+  corpus         23,469,663 chars
+  sequences      91,399 total  ->  91,143 train / 256 validation
+  batch          8 x 256 bytes = 2,048 bytes/step
+
+     step    train     bpb      val     best        lr     |g|    kB/s  MB seen  status
+  --------------------------------------------------------------------------
+        1   5.9091   8.525               inf  1.00e-05    5.16    0.54      0.0  flat
+       10   5.6017   8.082               inf  5.50e-05    5.12    0.54      0.0  flat
