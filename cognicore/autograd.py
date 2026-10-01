@@ -237,6 +237,21 @@ def _neg(a):
     return _mul(a, -1.0)
 
 
+def cumsum(a: Tensor, axis: int = 0) -> Tensor:
+    """Cumulative sum along `axis`. Backward is a reversed cumsum of the grad."""
+    a = _as_tensor(a)
+    out = np.cumsum(a.data, axis=axis)
+
+    def bw(g):
+        if not a.requires_grad:
+            return
+        # d(sum_{i<=t} x_i)/dx_j = 1 for all j <= t  =>  reverse-cumsum of g
+        gg = np.flip(np.cumsum(np.flip(g, axis=axis), axis=axis), axis=axis)
+        a.grad = gg.astype(F32) if a.grad is None else a.grad + gg
+
+    return Tensor(out, (a,), bw)
+
+
 # --------------------------------------------------------------------------
 # reductions
 # --------------------------------------------------------------------------
@@ -373,9 +388,14 @@ def _concat(tensors, axis=0):
 # gather / scatter
 # --------------------------------------------------------------------------
 def index_select(table: Tensor, idx: np.ndarray, axis: int = 0):
-    """table[axis][idx] — forward gather, backward scatter-add."""
+    """table[axis][idx] — forward gather, backward scatter-add.
+
+    `idx` indexa el eje `axis` (semantica de a[idx] con a = moveaxis(...,axis,0)).
+    Para un gather plano de un tensor ya aplanado, pasar axis=0 e idx plano.
+    """
     if not isinstance(table, Tensor):
         table = Tensor(table)
+    idx = np.asarray(idx)
     a = np.moveaxis(table.data, axis, 0)
     out = a[idx]
 
@@ -383,11 +403,23 @@ def index_select(table: Tensor, idx: np.ndarray, axis: int = 0):
         if not table.requires_grad:
             return
         gg = np.zeros_like(table.data)
-        np.add.at(np.moveaxis(gg, axis, 0), idx, np.moveaxis(g, 0, 0))
-        if table.grad is None:
-            table.grad = gg
+        # a[idx] consume g con shape idx.shape + a.shape[1:], asi que se
+        # aplana el par (idx, g) manteniendo el emparejamiento. np.add.at
+        # acumula correctamente los indices repetidos.
+        m = np.moveaxis(gg, axis, 0)
+        src = np.moveaxis(np.asarray(g), 0, 0)
+        if src.ndim > a.ndim:                 # gather multidimensional
+            lead = int(np.prod(idx.shape))
+            src = src.reshape(lead, *a.shape[1:])
+            flat = m.reshape(a.shape[0], -1)
+            np.add.at(flat, idx.reshape(-1), src.reshape(lead, -1))
+            m = flat.reshape(m.shape)
         else:
-            table.grad = table.grad + gg
+            np.add.at(m, idx, src)
+        if table.grad is None:
+            table.grad = np.moveaxis(m, 0, axis)
+        else:
+            table.grad = table.grad + np.moveaxis(m, 0, axis)
 
     return Tensor(out, (table,), bw)
 

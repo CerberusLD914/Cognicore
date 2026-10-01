@@ -126,14 +126,23 @@ def infer_config(z):
 def convert(src: Path, dst: Path | None = None, seq_len: int = 256):
     z = np.load(src)
 
-    # 1) config embebida por el trainer, si existe
+    # 1) config embebida por el trainer, si existe.
+    # El trainer guarda np.array(list(cfg_json)), que crea un array de tipo
+    # <U1 (cadenas de 1 caracter), NO de enteros. Hay que decodificar teniendo
+    # en cuenta ambos casos (y el de bytes, si alguien guardo np.frombuffer).
     cfg_dict = None
     if "__config__" in z.files:
-        raw = z["__config__"]
-        s = "".join(chr(int(c)) for c in np.asarray(raw).ravel())
+        raw = np.asarray(z["__config__"])
         try:
+            if raw.dtype.kind in ("U", "S"):
+                s = "".join(str(c) for c in raw.ravel())
+            else:
+                s = "".join(chr(int(c)) for c in raw.ravel())
             cfg_dict = json.loads(s)
-        except Exception:
+            assert isinstance(cfg_dict, dict)
+        except Exception as e:
+            print(f"[aviso] __config__ ilegible ({type(e).__name__}: {e}); "
+                  "se inferira por formas")
             cfg_dict = None
 
     if cfg_dict:

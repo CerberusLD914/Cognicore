@@ -252,11 +252,19 @@ def local_context(ids, hde, radius=2):
     ho = hde.out_dim
     out = jnp.zeros((B, T, (2 * radius + 1) * ho), dtype=jnp.float32)
     for j, o in enumerate(range(-radius, radius + 1)):
-        shifted = jnp.roll(ids, o, axis=1)
-        if o > 0:
-            shifted = shifted.at[:, :o].set(PAD)
-        elif o < 0:
-            shifted = shifted.at[:, T + o:].set(PAD)
+        # Desplazamiento CAUSAL con relleno PAD. jnp.roll envolvia los extremos
+        # (el byte final reaparecia al principio), lo que hacia que los offsets
+        # positivos miraran hacia atras en vez de hacia adelante.
+        if o == 0:
+            shifted = ids
+        elif o > 0:                      # mira a la derecha: ids[t+o]
+            shifted = jnp.full((B, T), PAD, dtype=ids.dtype)
+            if o < T:
+                shifted = shifted.at[:, :T - o].set(ids[:, o:])
+        else:                            # mira a la izquierda: ids[t+o]
+            shifted = jnp.full((B, T), PAD, dtype=ids.dtype)
+            if -o < T:
+                shifted = shifted.at[:, -o:].set(ids[:, :T + o])
         out = out.at[:, :, j * ho:(j + 1) * ho].set(hde.encode(shifted))
     return out
 

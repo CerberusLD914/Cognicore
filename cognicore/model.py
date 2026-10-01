@@ -337,11 +337,17 @@ def local_context(ids: np.ndarray, hde: HDE, radius: int = 2) -> np.ndarray:
     ho = hde.out_dim
     out = np.zeros((B, T, (2 * radius + 1) * ho), dtype=F32)
     for j, o in enumerate(range(-radius, radius + 1)):
-        sh = np.roll(ids, o, axis=1)
-        if o > 0:
-            sh[:, :o] = PAD
-        elif o < 0:
-            sh[:, T + o:] = PAD
+        # Desplazamiento CAUSAL con relleno PAD: la posicion t recibe ids[t+o].
+        # np.roll envolvia los extremos (el byte final reaparecia al principio).
+        sh = np.full((B, T), PAD, dtype=np.int64)
+        if o == 0:
+            sh[:, :] = ids
+        elif o > 0:                      # mira a la derecha: ids[t+o]
+            if o < T:
+                sh[:, :T - o] = ids[:, o:]
+        else:                            # mira a la izquierda: ids[t+o]
+            if -o < T:
+                sh[:, -o:] = ids[:, :T + o]
         out[:, :, j * ho:(j + 1) * ho] = hde.encode(sh)
     return out
 

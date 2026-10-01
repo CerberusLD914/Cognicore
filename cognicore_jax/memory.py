@@ -74,10 +74,19 @@ class LCCMemory:
         Wf = Wf.at[rows, cols].add(vals)
         Wf = Wf.reshape(B, T, M)
 
-        # write phase: bank = W^T draft
-        Wt = Wf.transpose(0, 2, 1)  # (B, M, T)
-        bank = Wt @ draft  # (B, M, dm)
-        bank = bank / (Wt.sum(axis=2, keepdims=True) + 0.25)
+        # Write phase: bank[t] = suma de escrituras en posiciones <= t.
+        # CAUSALIDAD: antes bank = W^T @ draft contraia el eje temporal
+        # ENTERO, asi que cada posicion recibia el contenido de todas las
+        # posiciones, incluidas las futuras (la que debe predecir). Eso hacia
+        # que la perdida bajara a ~0 nats/byte sin aprender nada y el modelo
+        # generara basura. Aqui el producto exterior por posicion se acumula
+        # con jnp.cumsum sobre t -> sigue siendo O(T).
+        Wt = Wf.transpose(0, 2, 1)                      # (B, M, T)
+        contrib = Wt[:, :, :, None] * draft[:, None, :, :]   # (B, M, T, dm)
+        bank = jnp.cumsum(contrib, axis=2)               # (B, M, T, dm)
+        norm = jnp.cumsum(Wt, axis=2)                    # (B, M, T)
+        bank = bank / (norm[..., None] + 0.25)
 
-        # read phase: out = W @ bank
-        return Wf @ bank  # (B, T, dm)
+        # Read phase: out[t] = suma_m Wf[t,m] * bank[m,t,:]
+        bankT = bank.transpose(0, 2, 1, 3)               # (B, T, M, dm)
+        return (Wf[:, :, :, None] * bankT).sum(axis=2)   # (B, T, dm)

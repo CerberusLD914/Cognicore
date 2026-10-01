@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .autograd import Tensor, param, index_select, _transpose, exp, F32
+from .autograd import (Tensor, param, index_select, _transpose, exp, F32,
+                       cumsum, _sum)
 from .hde import random_hypervectors
 
 
@@ -61,10 +62,12 @@ class LCCMemory:
         scores = xf @ W_a                                 # (B*T, M) Tensor
         top = np.argpartition(-scores.data, k - 1, axis=1)[:, :k]
 
-        # gather the selected scores DIFFERENTIABLY (index_select, not .data)
-        flat = scores.reshape(B * T * M)
+        # gather the selected scores DIFFERENTIABLY (index_select, no .data).
+        # Aplanar a 1-D y usar indice plano mantiene el enlace con W_a; usar
+        # .data aqui lo cortaria en silencio.
+        flat = scores.reshape(B * T * M)                  # Tensor, mantiene W_a
         gidx = (np.arange(B * T)[:, None] * M + top).reshape(-1)
-        raw = index_select(flat, gidx).reshape(B * T, k)
+        raw = index_select(flat, gidx, axis=0).reshape(B * T, k)
         # differentiable softmax over the k selected slots (shift is constant,
         # which leaves the softmax gradient unchanged)
         e = exp(raw - Tensor(raw.data.max(axis=1, keepdims=True)))
@@ -75,6 +78,7 @@ class LCCMemory:
         g = index_select(Tensor(self.slots), top.reshape(-1), axis=0)  # (B*T*k, dm)
         draft = (g * w.reshape(-1, 1)).reshape(B * T, k, dm).sum(axis=1)
         draft = draft.reshape(B, T, dm)
+        draft = draft.reshape(B, T, dm)
 
         # ---- write gate: only ambiguous tokens write (hard decision) -----
         ent = -(wn * np.log(wn + 1e-8)).sum(axis=1)        # (B*T,)
@@ -83,12 +87,26 @@ class LCCMemory:
         np.put_along_axis(Wf, top, wn * gscale[:, None], axis=1)
         Wf = Wf.reshape(B, T, M)
 
-        # ---- write phase: bank = W^T draft (1 GEMM) ---------------------
+        # ---- write phase: bank[t] = suma de escrituras en posiciones <= t ---
+        # CAUSALIDAD: antes bank = W^T @ draft contraia el eje temporal
+        # ENTERO, asi que cada posicion recibia el contenido de todas las
+        # posiciones, incluidas las futuras (la que debe predecir). Con eso la
+        # perdida bajaba a ~0 nats/byte sin aprender nada y el modelo generaba
+        # basura. Aqui se descompone en producto exterior por posicion y se
+        # acumula con cumsum sobre t -> sigue siendo O(T).
         Wt = _transpose(Tensor(Wf), (0, 2, 1))             # (B, M, T)
-        bank = Wt @ draft                                  # (B, M, dm)
-        bank = bank / (Wt.sum(axis=2, keepdims=True) + 0.25)
+        # (B, M, T, 1) * (B, 1, T, dm) -> (B, M, T, dm). OJO: draft es un
+        # Tensor; usar draft.data aqui cortaria el gradiente hacia W_a (por eso
+        # gradcheck reportaba lcc.addr sin gradiente).
+        contrib = Wt[:, :, :, None] * draft[:, None, :, :]
+        bank = cumsum(contrib, axis=2)                      # (B, M, T, dm)
+        norm = cumsum(Wt, axis=2)                           # (B, M, T)
+        bank = bank / (norm[:, :, :, None] + 0.25)
 
-        # ---- read phase: out = W @ bank (1 GEMM) -----------------------
-        return Tensor(Wf) @ bank                           # (B, T, dm)
+        # ---- read phase: out[t] = suma_m Wf[t,m] * bank[m,t,:] -----------
+        # bank -> (B, T, M, dm) y se contrae el eje M (contraccion pequena).
+        bankT = _transpose(bank, (0, 2, 1, 3))             # (B, T, M, dm)
+        out = _sum(Tensor(Wf)[:, :, :, None] * bankT, axis=2)   # (B, T, dm)
+        return out                                         # (B, T, dm)
 
     __call__ = forward

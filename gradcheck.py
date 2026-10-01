@@ -9,7 +9,7 @@ import numpy as np
 
 from cognicore.autograd import (Tensor, param, rmsnorm, silu, swiglu, softplus,
                                 index_select, scatter_add, _transpose,
-                                cross_entropy)
+                                cross_entropy, cumsum)
 from cognicore.ssm import selective_ssm
 
 rng = np.random.default_rng(0)
@@ -122,6 +122,9 @@ def test_ops():
     x3 = Tensor(rng.standard_normal((2, 3, 4)).astype(np.float32), requires_grad=True)
     w3 = Tensor(rng.standard_normal((4, 5)).astype(np.float32), requires_grad=True)
     ok &= check("matmul3d", lambda: {"a": x3, "b": w3}, lambda i: i["a"] @ i["b"],
+                lambda o, i: o.sum())
+    # cumsum: usado por la memoria LCC tras el arreglo de causalidad
+    ok &= check("cumsum", lambda: {"x": x3}, lambda i: cumsum(i["x"], axis=1),
                 lambda o, i: o.sum())
     return ok
 

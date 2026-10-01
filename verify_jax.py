@@ -56,11 +56,6 @@ def main():
     # El modelo NumPy usa "L0.n1"; Flax usa el dict anidado del modulo LCBlock.
     sd = m.state_dict()
 
-    def per_layer(name):
-        # "L3.n1" -> ("3", "n1")
-        li, leaf = name.split(".", 1)
-        return li[1:], leaf.replace(".", "_")
-
     flax_params = {
         "proj_in": jnp.asarray(sd["proj_in"]),
         "refine_in": jnp.asarray(sd["refine_in"]),
@@ -70,22 +65,34 @@ def main():
         "byte_bias": jnp.asarray(sd["byte_bias"]),
         "logit_gain": jnp.asarray(sd["logit_gain"]),
     }
+    # El motor NumPy nombra los tensores de capa "L{i}.<hoja>" y el de Flax los
+    # guarda en el scope "LCBlock_{i}" con el MISMO nombre completo, asi que se
+    # copia el nombre tal cual (los puntos SÍ son válidos en Flax).
     for i in range(cfg.n_layers):
         node = {}
         for name, arr in sd.items():
-            if not name.startswith(f"L{i}."):
-                continue
-            _, leaf = per_layer(name)
-            node[leaf] = jnp.asarray(arr)
+            if name.startswith(f"L{i}."):
+                node[name] = jnp.asarray(arr)
+        # OJO: en NumPy la direccion de la memoria se llama "lcc.addr" en TODAS
+        # las capas, asi que state_dict() solo conserva la de la ultima. Es un
+        # bug preexistente del motor NumPy; aqui se replica en cada capa para
+        # que la comparacion sea valida.
+        if "lcc.addr" in sd:
+            node[f"L{i}.lcc.addr"] = jnp.asarray(sd["lcc.addr"])
         flax_params[f"LCBlock_{i}"] = node
 
     # --- forward en JAX ---
     from cognicore_jax.model import CogniCore as JaxCore, Config as JaxCfg
 
-    jcfg = JaxCfg(target_params=400_000, seq_len=64, seed=1234, d_hd=64)
+    # La Config de JAX tiene _solve() propio, asi que se sobreescriben los
+    # campos DESPUES de construirla para que coincidan exactamente con NumPy.
+    jcfg = JaxCfg(target_params=400_000, seq_len=64, seed=1234, d_hd=cfg.d_hd)
     jcfg.n_mem, jcfg.d_mem = cfg.n_mem, cfg.d_mem
+    jcfg.vocab = cfg.vocab
     jcfg.d_model, jcfg.n_layers = cfg.d_model, cfg.n_layers
     jcfg.d_inner, jcfg.d_ff = cfg.d_inner, cfg.d_ff
+    print(f"\n[0] NumPy cfg: {cfg}")
+    print(f"    JAX    cfg: {jcfg}")
 
     jm = JaxCore(jcfg)
     ids_j = jnp.asarray(ids, dtype=jnp.int32)

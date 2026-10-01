@@ -154,9 +154,6 @@ class HDE:
 
     def _tag_of(self, ids):
         nl = (ids == NL).astype(np.int64)
-        is_sp = (ids == SP).astype(np.int64)
-        start = np.zeros_like(nl)
-        start[..., 1:] = np.maximum(nl[..., 1:] * 0, 0)
         is_pad = (ids == PAD).astype(np.int64)
         tag = np.ones_like(nl)                        # 1 = mid
         tag[..., 0] = 0                               # 0 = start
