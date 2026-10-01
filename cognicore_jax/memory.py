@@ -67,9 +67,11 @@ class LCCMemory:
         ent = -(wn * jnp.log(wn + 1e-8)).sum(axis=1)
         gscale = (1.0 / k) * (ent > 0.30).astype(jnp.float32)
         Wf = jnp.zeros((B * T, M), dtype=jnp.float32)
-        Wf = Wf.at[jnp.arange(B * T)[:, None].reshape(-1), top.reshape(-1)].add(
-            (wn * gscale[:, None]).reshape(-1)
-        )
+        # scatter add: Wf[rows, cols] += vals
+        rows = jnp.arange(B * T)[:, None]  # (B*T, 1)
+        cols = top  # (B*T, k)
+        vals = wn * gscale[:, None]  # (B*T, k)
+        Wf = Wf.at[rows, cols].add(vals)
         Wf = Wf.reshape(B, T, M)
 
         # write phase: bank = W^T draft
