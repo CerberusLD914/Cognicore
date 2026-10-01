@@ -144,9 +144,18 @@ def train(target_params=10_000_000,
     t0 = time.time()
     running = []
 
+    # RNG de muestreo. OJO: este mismo objeto se pasa a model.init/apply, y Flax
+    # lo consume al construir el grafo (los initializers `lambda _:` de cada
+    # capa se ejecutan en ese momento). Por eso NO se puede re-muestrear aqui con
+    # un default_rng(seed + step): eso haria que cada re-muestreo cambiase el
+    # PRNG del grafo y los initializers volatile-mostrarian valores distintos en
+    # cada paso. Un unico RNG que avanza con split() mantiene la inicializacion
+    # estable entre pasos.
+    data_rng = np.random.default_rng(seed)
+
     for step in range(start, steps):
         # Muestrear batch aleatorio
-        rows = train_data[np.random.default_rng(seed + step).integers(0, len(train_data), batch)]
+        rows = train_data[data_rng.integers(0, len(train_data), batch)]
         ids = jnp.asarray(rows[:, :-1], dtype=jnp.int32)
         tgt = jnp.asarray(rows[:, 1:], dtype=jnp.int32)
 
