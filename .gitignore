@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# CogniCore - datos y checkpoints (archivos grandes)
+data/
+checkpoints/*.npz
+checkpoints/*.log
+checkpoints/*.history.json
+checkpoints/*.int8.npz
+
+# Cognicore - modelos entrenados
+*.npz
+*.npy
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Entornos
+.env
+.env.local
+
+# Logs
+*.log
+
+# Temporales
+tmp/
+temp/
+*.tmp
