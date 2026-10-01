@@ -1,13 +1,13 @@
 """
 ssm.py — Selective State-Space scan (diagonal) en JAX.
 
-Forward (por canal c):
+Forward (per channel c):
     dt_t  = softplus(delta_t)
     a_t   = exp(A[c] * dt_t)
     h_t   = a_t * h_{t-1} + dt_t * u_t
     y_t   = (C[c] * h_t) * silu(z_t)
 
-Usa jax.lax.scan para O(T) forward y backward automático.
+Usa jax.lax.scan para O(T) forward y backward automatico.
 """
 
 from __future__ import annotations
@@ -34,6 +34,14 @@ def selective_ssm(u, delta, z, A, C, delta_bias, delta_scale):
     a_log = A[None, None, :] * dt
     a = jnp.exp(a_log)
 
+    B, T, D = u.shape
+
+    # Transpose to (T, B, D) for scan over time dimension
+    a_T = a.transpose(1, 0, 2)      # (T, B, D)
+    dt_T = dt.transpose(1, 0, 2)    # (T, B, D)
+    u_T = u.transpose(1, 0, 2)      # (T, B, D)
+    z_T = z.transpose(1, 0, 2)      # (T, B, D)
+
     def scan_fn(h_prev, inputs):
         a_t, dt_t, u_t, z_t = inputs
         h_t = a_t * h_prev + dt_t * u_t
@@ -41,7 +49,7 @@ def selective_ssm(u, delta, z, A, C, delta_bias, delta_scale):
         y_t = C * h_t * sig
         return h_t, y_t
 
-    h0 = jnp.zeros_like(u[:, 0, :])
-    _, y = jax.lax.scan(scan_fn, h0, (a, dt, u, z), reverse=False)
-    # y is (T, B, D) from scan, transpose to (B, T, D)
-    return y.transpose(1, 0, 2)
+    h0 = jnp.zeros((B, D), dtype=jnp.float32)
+    _, y_T = jax.lax.scan(scan_fn, h0, (a_T, dt_T, u_T, z_T), reverse=False)
+    # y_T is (T, B, D), transpose back to (B, T, D)
+    return y_T.transpose(1, 0, 2)
