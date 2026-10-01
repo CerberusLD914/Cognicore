@@ -39,11 +39,16 @@ from cognicore import generate as G
 from cognicore.quant import quantize, report as qreport
 
 
-def find_checkpoint():
+def find_checkpoints():
+    """Candidate checkpoints, newest first."""
     ck = Path("checkpoints")
     if not ck.exists():
-        return None
-    cands = sorted(ck.glob("*.npz"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return []
+    return sorted(ck.glob("*.npz"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def find_checkpoint():
+    cands = find_checkpoints()
     return cands[0] if cands else None
 
 
@@ -87,15 +92,39 @@ def load(path):
             if cfg:
                 break
     if cfg is None:
-        print("FAILED - cannot infer architecture from checkpoint")
-        print("delete it and retrain, or keep the .meta.json next to it")
-        sys.exit(1)
+        raise RuntimeError("cannot infer architecture from checkpoint")
 
     m = CogniCore(cfg)
     m.load(path)
     print(f"{m.n_params():,} parameters")
     print(f"  {cfg}")
     return m, cfg
+
+
+def load_any(paths, quiet=False):
+    """Carga el PRIMER checkpoint que se pueda cargar de `paths`.
+
+    Necesario porque un .npz exportado por la version JAX/Flax usa los nombres
+    de parametros de Flax ("LCBlock_0/L0_n1") y NO es compatible con este motor
+    NumPy, aunque sea el mas reciente. Antes se abortaba al primer fallo.
+    Convierte primero con:  py convert_checkpoint.py <ckpt.npz>
+    """
+    errs = []
+    for p in paths:
+        try:
+            return load(p)
+        except Exception as e:
+            if not quiet:
+                print(f"FAILED - {e}")
+            errs.append((p, e))
+    print("\nNingun checkpoint de checkpoints/ se pudo cargar.")
+    if errs:
+        print("Intentados:")
+        for p, e in errs:
+            print(f"  {p.name}: {e}")
+        print("\nSi el modelo se entreno en Colab con la version JAX, convierte "
+              "primero el .npz:\n    py convert_checkpoint.py checkpoints\\<archivo>.npz")
+    sys.exit(1)
 
 
 def show_stats(m, cfg):
@@ -138,19 +167,20 @@ def surprisal(m, cfg, text):
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1].endswith(".npz"):
-        path = Path(sys.argv[1])
+        paths = [Path(sys.argv[1])]
     else:
-        path = find_checkpoint()
-    if path is None:
+        paths = find_checkpoints()
+    if not paths:
         print("No checkpoint found in checkpoints/.")
         print("  train one:   py quicktest.py")
         print("          or:  py run_all.py")
         return
-    m, cfg = load(path)
+    m, cfg = load_any(paths)
     show_stats(m, cfg)
 
     temp, topk, nbytes = 0.75, 40, 300
     seed = 0
+    chunk = cfg.seq_len
     print("\ntype a prompt and press enter.  :quit to exit, :stats for info\n")
 
     while True:
@@ -179,10 +209,18 @@ def main():
                     nbytes = int(parts[1]); print(f"bytes = {nbytes}")
                 elif cmd == ":seed" and len(parts) > 1:
                     seed = int(parts[1]); print(f"seed = {seed}")
+                elif cmd == ":chunk" and len(parts) > 1:
+                    # Ventana de contexto en BYTES. El SSM decae exponencialmente,
+                    # asi que una ventana mas corta apenas cambia la salida pero
+                    # reduce mucho el coste: ~180 ms/byte con 256, ~105 con 128,
+                    # ~88 con 64 (medido en CPU, 10M params).
+                    chunk = max(16, int(parts[1]))
+                    print(f"ventana = {chunk} bytes")
                 elif cmd == ":quant":
                     qreport(quantize(m, bits=8))
                 elif cmd == ":save" and len(parts) > 1:
-                    out = G.sample(m, line, nbytes, temp, topk, seed, log=lambda *a: None)
+                    out = G.sample(m, line, nbytes, temp, topk, seed, log=lambda *a: None,
+                            chunk=chunk)
                     Path(parts[1]).write_text(out, encoding="utf-8")
                     print(f"wrote {parts[1]}")
                 elif cmd == ":compare" and len(parts) > 1:
@@ -196,7 +234,7 @@ def main():
                             f"{repr(chr(b)) if 32 <= b < 127 else hex(b)}:"
                             f"{s:.2f}" for b, s in worst))
                 else:
-                    print("commands: :temp :topk :n :seed :quant :save <f> "
+                    print("commands: :temp :topk :n :seed :chunk :quant :save <f> "
                           ":compare <text> :stats :quit")
             except Exception as e:
                 print(f"error: {e}")
@@ -204,7 +242,8 @@ def main():
 
         # normal prompt -> continue it
         try:
-            out = G.sample(m, line, nbytes, temp, topk, seed, log=lambda *a: None)
+            out = G.sample(m, line, nbytes, temp, topk, seed, log=lambda *a: None,
+                        chunk=chunk)
             print("\n" + "-" * 66)
             print(out)
             print("-" * 66)

@@ -191,12 +191,33 @@ def train(target_params=10_000_000,
 
 
 def save_checkpoint(state, path, model, cfg, n_params):
-    """Guarda checkpoint como NPZ."""
+    """Guarda checkpoint como NPZ + .meta.json.
+
+    Guarda ADEMAS la config como el array __config__ dentro del npz, para que
+    convert_checkpoint.py pueda reconstruir la arquitectura exacta sin tener que
+    adivinarla por las formas.
+    """
     params = state.params
     flat = {}
     for key, value in _flatten_params(params).items():
         flat[key] = np.array(value)
+    # config embebida (Flax no necesita esto; el conversor si)
+    cfg_json = json.dumps(cfg.to_dict())
+    flat["__config__"] = np.array(list(cfg_json))
     np.savez_compressed(path, **flat)
+
+    # .meta.json hermano: sin esto chat.py / quicktest.py no pueden deducir la
+    # arquitectura y abortan con "cannot infer architecture from checkpoint".
+    meta = {
+        "arch": "CogniCore / HDS-LSM",
+        "backend": "jax",
+        "not_an_llm": "no attention, no KV cache, no token embedding table",
+        "config": cfg.to_dict(),
+        "hde": {"dim": int(cfg.d_hd), "seed": 0xC0FFEE, "atoms": int(cfg.vocab)},
+        "n_params": int(n_params),
+    }
+    meta_path = Path(str(path).replace(".npz", ".meta.json"))
+    meta_path.write_text(json.dumps(meta, indent=2))
 
 
 def _flatten_params(params, prefix=""):

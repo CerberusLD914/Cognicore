@@ -17,6 +17,38 @@ cognicore_jax/
 CogniCore_GPU.ipynb  # Notebook de Colab listo para ejecutar
 ```
 
+## Usar el modelo entrenado en Colab desde tu PC
+
+El `.npz` que descarga Colab está en formato Flax (`LCBlock_0/L0_n1`), que **no** es
+compatible con el motor NumPy original (`chat.py`, `quicktest.py`). Conviértelo una vez:
+
+```bash
+py convert_checkpoint.py checkpoints\cognicore-10M.npz
+# -> checkpoints\cognicore-10M_numpy.npz  +  .meta.json
+```
+
+Luego:
+
+```bash
+chat.cmd                     # carga el convertible automaticamente
+py chat.py checkpoints\cognicore-10M_numpy.npz
+```
+
+A partir de ahora el trainer de Colab ya escribe el `.meta.json` y la config embebida,
+as que los checkpoints nuevos no necesitan conversión previa.
+
+### Velocidad de generación en CPU (10M params, medido)
+
+| Ventana (`:chunk`) | ms/byte | 300 bytes |
+|--------------------|---------|-----------|
+| 256 (por defecto) | ~180 ms | ~0.9 min |
+| 128 | ~105 ms | ~0.5 min |
+| 64 | ~88 ms | ~0.4 min |
+
+El SSM decae exponencialmente, así que una ventana más corta apenas cambia la salida.
+Para generación rápida de verdad, usa la GPU de Colab (el mismo modelo, orden de
+magnitude más rápido).
+
 ## Inicio rápido en Google Colab
 
 ### Paso 1: Preparar los archivos
