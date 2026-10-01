@@ -54,12 +54,14 @@ def create_train_state(rng, model, ids, cfg, lr=3e-3, weight_decay=0.02):
 
 @jax.jit
 def train_step(state, ids, tgt, lr):
-    """Un paso de entrenamiento compilado con JIT."""
+    """Un paso de entrenamiento compilado con JIT.
+
+    NOTA: CogniCore.__call__ ya devuelve cross_entropy(logits, targets)
+    cuando `targets` no es None, asi que aqui NO se recalcula.
+    """
 
     def loss_fn(params):
-        logits = state.apply_fn({"params": params}, ids, tgt, refine=True)
-        loss = cross_entropy(logits, tgt)
-        return loss
+        return state.apply_fn({"params": params}, ids, tgt, refine=True)
 
     loss, grads = jax.value_and_grad(loss_fn)(state.params)
     state = state.apply_gradients(grads=grads)
@@ -69,8 +71,7 @@ def train_step(state, ids, tgt, lr):
 @jax.jit
 def eval_step(state, ids, tgt):
     """Evaluación compilada con JIT."""
-    logits = state.apply_fn({"params": state.params}, ids, tgt, refine=True)
-    return cross_entropy(logits, tgt)
+    return state.apply_fn({"params": state.params}, ids, tgt, refine=True)
 
 
 def train(target_params=10_000_000,
@@ -124,9 +125,9 @@ def train(target_params=10_000_000,
     val = data[:val_n]
     train_data = data[val_n:]
 
-    # Convertir a JAX arrays
-    val_ids = jnp.array(val[:, :-1])
-    val_tgt = jnp.array(val[:, 1:])
+    # Convertir a JAX arrays (int32 explicito: JAX no tiene int64 por defecto)
+    val_ids = jnp.asarray(val[:, :-1], dtype=jnp.int32)
+    val_tgt = jnp.asarray(val[:, 1:], dtype=jnp.int32)
 
     start = 0
     hist = []
@@ -145,10 +146,9 @@ def train(target_params=10_000_000,
 
     for step in range(start, steps):
         # Muestrear batch aleatorio
-        rng, subkey = jax.random.split(rng)
         rows = train_data[np.random.default_rng(seed + step).integers(0, len(train_data), batch)]
-        ids = jnp.array(rows[:, :-1])
-        tgt = jnp.array(rows[:, 1:])
+        ids = jnp.asarray(rows[:, :-1], dtype=jnp.int32)
+        tgt = jnp.asarray(rows[:, 1:], dtype=jnp.int32)
 
         cur_lr = lr_at(step, steps, lr)
         state, loss = train_step(state, ids, tgt, cur_lr)
@@ -167,8 +167,13 @@ def train(target_params=10_000_000,
 
         if (step + 1) % eval_every == 0 or step == steps - 1:
             vl = float(eval_step(state, val_ids, val_tgt))
-            hist[-1]["val"] = vl
             log(f"    >> val loss {vl:.4f}  val bpc {vl / np.log(2):.3f}")
+            # Si este step no se registro arriba (no es multiplo de 20 y no es
+            # el ultimo), hay que crear la entrada en vez de mutar la anterior.
+            if not hist or hist[-1]["step"] != step:
+                hist.append({"step": step, "train": float(np.mean(running[-20:])),
+                             "lr": cur_lr})
+            hist[-1]["val"] = vl
             if vl < best:
                 best = vl
                 # Guardar checkpoint
@@ -210,8 +215,8 @@ def evaluate(state, val, batch=8):
     """Evalúa el modelo en el conjunto de validación."""
     tot, n = 0.0, 0
     for i in range(0, len(val) - batch + 1, batch):
-        ids = jnp.array(val[i:i + batch, :-1])
-        tgt = jnp.array(val[i:i + batch, 1:])
+        ids = jnp.asarray(val[i:i + batch, :-1], dtype=jnp.int32)
+        tgt = jnp.asarray(val[i:i + batch, 1:], dtype=jnp.int32)
         l = float(eval_step(state, ids, tgt))
         tot += l * len(tgt)
         n += len(tgt)

@@ -125,7 +125,12 @@ class LCBlock(nn.Module):
 
         # LCC memory
         mem = LCCMemory(cfg.n_mem, cfg.d_mem, d, seed=s + 8)
-        mem_params = mem.init_params(jax.random.PRNGKey(s + 9), k=2)
+        # La proyeccion de direccion DEBE ser un param entrenable (registrado
+        # en el dict de params de Flax); si se crea como constante de numpy,
+        # nunca recibe gradiente y la memoria queda congelada.
+        mem_W_a = self.param(f"L{self.li}.lcc.addr",
+                             nn.initializers.normal(1.0 / np.sqrt(d)),
+                             (d, cfg.n_mem))
         mem_proj = self.param(f"L{self.li}.mem_proj",
                               nn.initializers.normal(1.0 / np.sqrt(cfg.d_mem)),
                               (cfg.d_mem, d))
@@ -141,7 +146,7 @@ class LCBlock(nn.Module):
         y = selective_ssm(c, delta, z, A, C, d_bias, d_scale)
         y = y @ out_proj
 
-        m = mem.forward(mem_params, x)
+        m = mem.forward({"W_a": mem_W_a}, x)
         y = y + m @ mem_proj
 
         x = x + y
