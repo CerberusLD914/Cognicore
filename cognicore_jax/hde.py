@@ -128,4 +128,4 @@ class HDE:
     def atom_matrix(self):
         """(dim, atoms) L2-normalized content hypervectors."""
         a = self._content / (jnp.linalg.norm(self._content, axis=1, keepdims=True) + 1e-8)
-        return jnp.ascontiguousarray(a.T.astype(jnp.float32))
+        return a.T.astype(jnp.float32)
